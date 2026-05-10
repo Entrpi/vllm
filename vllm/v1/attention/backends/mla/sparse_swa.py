@@ -24,6 +24,7 @@ from vllm.v1.attention.backends.utils import split_decodes_and_prefills
 from vllm.v1.attention.ops.flashmla import FlashMLASchedMeta, get_mla_metadata
 from vllm.v1.kv_cache_interface import (
     AttentionSpec,
+    CompressorStateMLASpec,
     KVCacheSpec,
     MLAAttentionSpec,
     SlidingWindowMLASpec,
@@ -81,7 +82,14 @@ class DeepseekV4SWACache(torch.nn.Module, AttentionLayerBase):
         assert self.dtype == torch.uint8
 
     def get_kv_cache_spec(self, vllm_config: VllmConfig) -> KVCacheSpec:
-        return SlidingWindowMLASpec(
+        # CompressorStateMLASpec is a SlidingWindowMLASpec subclass that
+        # bounds admission by sliding_window only — the SWA cache (like the
+        # compressor state) is a fixed-size sliding-window state-space buffer
+        # per paper §3.5.1, not a chunked-prefill workspace. The parent
+        # class's bound includes max_num_batched_tokens, which over-allocates
+        # this pool by ~85x for typical V4-Flash configs (sliding_window=128,
+        # block_size=64, max_num_batched_tokens=16384).
+        return CompressorStateMLASpec(
             block_size=self.block_size,
             num_kv_heads=1,
             head_size=self.head_dim,

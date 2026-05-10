@@ -32,6 +32,7 @@ from vllm.v1.attention.ops.deepseek_v4_ops.fused_indexer_q import (
     MXFP4_BLOCK_SIZE,
 )
 from vllm.v1.kv_cache_interface import (
+    CompressorStateMLASpec,
     KVCacheSpec,
     MLAAttentionSpec,
     SlidingWindowMLASpec,
@@ -159,7 +160,12 @@ class CompressorStateCache(torch.nn.Module, AttentionLayerBase):
             raise ValueError(f"Invalid compress ratio: {compress_ratio}")
 
     def get_kv_cache_spec(self, vllm_config: VllmConfig) -> KVCacheSpec:
-        return SlidingWindowMLASpec(  # only has one vector instead of K + V
+        # CompressorStateMLASpec is a SlidingWindowMLASpec subclass that
+        # bounds admission by sliding_window only (the compressor state is a
+        # fixed-size state-space model — paper §3.5.1). The parent class's
+        # default bound includes max_num_batched_tokens, which over-allocates
+        # this pool by ~1000× for typical V4-Flash configs.
+        return CompressorStateMLASpec(  # only has one vector instead of K + V
             block_size=self.block_size,
             num_kv_heads=1,
             head_size=self.state_dim,

@@ -14,6 +14,7 @@ from vllm.v1.core.kv_cache_utils import (
 )
 from vllm.v1.kv_cache_interface import (
     ChunkedLocalAttentionSpec,
+    CompressorStateMLASpec,
     CrossAttentionSpec,
     FullAttentionSpec,
     KVCacheSpec,
@@ -1145,6 +1146,11 @@ spec_manager_map: dict[type[KVCacheSpec], type[SingleTypeKVCacheManager]] = {
     MLAAttentionSpec: FullAttentionManager,
     SlidingWindowSpec: SlidingWindowManager,
     SlidingWindowMLASpec: SlidingWindowManager,
+    # CompressorStateMLASpec is a SlidingWindowMLASpec subclass (only the
+    # admission bound differs, exposed via max_admission_blocks_per_request
+    # on the spec). spec_manager_map lookup is exact-type, not isinstance,
+    # so the entry is required even though it reuses the parent manager.
+    CompressorStateMLASpec: SlidingWindowManager,
     ChunkedLocalAttentionSpec: ChunkedLocalAttentionManager,
     MambaSpec: MambaManager,
     CrossAttentionSpec: CrossAttentionManager,

@@ -528,6 +528,36 @@ class SlidingWindowMLASpec(SlidingWindowSpec):
         )
 
 
+@dataclass(frozen=True, kw_only=True)
+class CompressorStateMLASpec(SlidingWindowMLASpec):
+    """SWA-MLA spec for the DeepseekV4 compressor state cache.
+
+    Unlike vanilla ``SlidingWindowSpec`` — which bounds admission by
+    ``min(sliding_window - 1 + max_num_batched_tokens, max_model_len)`` on the
+    assumption that chunked prefill may transiently hold up to
+    ``max_num_batched_tokens`` uncompressed tokens — the DeepseekV4 compressor
+    state is a fixed-size state-space model. Per the V4 paper §3.5.1: "The
+    corresponding KV cache can [...] be regarded as a sequence-specific state
+    that depends solely on the current position." It never holds more than
+    ``sliding_window`` tokens regardless of batch size.
+
+    Bounding admission by ``sliding_window`` only drops the per-request startup
+    budget from ``O(max_model_len / block_size)`` to
+    ``O(sliding_window / block_size)``. For DSv4-Flash at
+    ``max_model_len=16384`` with CSA's ``sliding_window=8`` and
+    ``block_size=4``, that's 4097 blocks vs 3 blocks per request — ~1300×
+    smaller for that group, and the dominant contribution to overall KV cache
+    over-allocation in the current vLLM layout.
+    """
+
+    def max_admission_blocks_per_request(
+        self, max_num_batched_tokens: int, max_model_len: int
+    ) -> int:
+        # +1 because the window may not start from a block boundary, same
+        # convention as the parent class.
+        return cdiv(self.sliding_window, self.block_size) + 1
+
+
 @dataclass(frozen=True)
 class MambaSpec(KVCacheSpec):
     shapes: tuple[tuple[int, ...], ...]

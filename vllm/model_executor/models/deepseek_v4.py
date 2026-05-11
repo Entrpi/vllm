@@ -1482,6 +1482,8 @@ class DeepseekV4Model(nn.Module):
                         and loaded_weight.dtype == torch.float8_e8m0fnu
                     ):
                         loaded_weight = loaded_weight.view(torch.uint8)
+                    name_mapped = None
+                    _ds4_load_succeeded = False
                     for mapping in expert_mapping:
                         param_name, weight_name, expert_id, shard_id = mapping
                         if weight_name not in name:
@@ -1505,8 +1507,42 @@ class DeepseekV4Model(nn.Module):
                             return_success=True,
                         )
                         if success:
+                            _ds4_load_succeeded = True
                             name = name_mapped
                             break
+                    if not _ds4_load_succeeded:
+                        # Hybrid 2-bit MoE expert fall-through: the FusedMoE
+                        # per-expert loader doesn't recognize quantized tensor
+                        # names like w13_iq2xxs_qs / w2_q2k_scales and returns
+                        # success=False. Try a few candidate rewrites of the
+                        # safetensor key — some have a "model." prefix stripped
+                        # by an upstream WeightsMapper, and some checkpoints
+                        # use mlp.experts.* while the live module tree uses
+                        # ffn.experts.*.
+                        _candidates = [
+                            name,
+                            f"model.{name}",
+                            name.replace("mlp.experts", "ffn.experts"),
+                            f"model.{name}".replace("mlp.experts", "ffn.experts"),
+                        ]
+                        target = next(
+                            (c for c in _candidates if c in params_dict), None
+                        )
+                        if target is not None:
+                            param = params_dict[target]
+                            weight_loader = getattr(
+                                param, "weight_loader", default_weight_loader
+                            )
+                            weight_loader(param, loaded_weight)
+                            loaded_params.add(target)
+                        else:
+                            if "iq2xxs" in name or "q2k" in name:
+                                print(
+                                    f"[DS4_FT] no match for {name!r} "
+                                    f"(tried 4 candidates)",
+                                    flush=True,
+                                )
+                        continue
                     loaded_params.add(name_mapped)
                     continue
                 elif "attn_sink" in name:

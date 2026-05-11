@@ -1564,6 +1564,32 @@ class DeepseekV4Model(nn.Module):
                     loaded_params.add(name)
                     continue
 
+        # Optional post-load completion hook for hybrid 2-bit deployments.
+        # When the ds4_hybrid_quant package is installed, its complete_load()
+        # default-initializes scale/bias/norm params and direct-loads any
+        # tensor families that vLLM's standard pipeline missed (fused-attn,
+        # compressor, shared-experts). Gated entirely behind try/except so
+        # a missing package or runtime error degrades gracefully — vLLM
+        # users without the hybrid plugin see no behavior change.
+        try:
+            import os as _os
+            from ds4_hybrid_quant.load_completion import complete_load
+
+            complete_load(
+                params_dict,
+                loaded_params,
+                ckpt_dir=_os.environ.get(
+                    "DS4_CKPT_DIR",
+                    "/models/DeepSeek-V4-Flash-IQ2XXS-Q2K-FP8-120GB-target",
+                ),
+            )
+        except ModuleNotFoundError:
+            pass
+        except Exception as _e:
+            print(f"[DS4_LOAD_COMP] FAILED: {_e!r}", flush=True)
+            import traceback as _tb
+
+            _tb.print_exc()
         return loaded_params
 
     def get_expert_mapping(self) -> list[tuple[str, str, int, str]]:
